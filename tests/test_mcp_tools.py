@@ -11,6 +11,7 @@ from mcp_email_server.app import (
     list_available_accounts,
     list_emails_metadata,
     send_email,
+    set_keywords,
 )
 from mcp_email_server.config import EmailServer, EmailSettings, ProviderSettings
 from mcp_email_server.emails.models import (
@@ -19,6 +20,7 @@ from mcp_email_server.emails.models import (
     EmailContentBatchResponse,
     EmailMetadata,
     EmailMetadataPageResponse,
+    SetKeywordsResponse,
 )
 
 
@@ -544,3 +546,83 @@ class TestMcpTools:
             )
 
             assert result.emails[0].message_id == "<test@example.com>"
+
+    @pytest.mark.asyncio
+    async def test_set_keywords(self):
+        """Test set_keywords MCP tool."""
+        mock_handler = AsyncMock()
+        mock_handler.set_keywords.return_value = (["12345", "12346"], [])
+
+        with patch("mcp_email_server.app.dispatch_handler", return_value=mock_handler):
+            result = await set_keywords(
+                account_name="test_account",
+                email_ids=["12345", "12346"],
+                keywords=["important", "todo"],
+            )
+
+            assert isinstance(result, SetKeywordsResponse)
+            assert result.updated_ids == ["12345", "12346"]
+            assert result.failed_ids == []
+            mock_handler.set_keywords.assert_called_once_with(["12345", "12346"], ["important", "todo"], "INBOX")
+
+    @pytest.mark.asyncio
+    async def test_set_keywords_with_failures(self):
+        """Test set_keywords MCP tool with some failures."""
+        mock_handler = AsyncMock()
+        mock_handler.set_keywords.return_value = (["12345"], ["12346"])
+
+        with patch("mcp_email_server.app.dispatch_handler", return_value=mock_handler):
+            result = await set_keywords(
+                account_name="test_account",
+                email_ids=["12345", "12346"],
+                keywords=["urgent"],
+            )
+
+            assert isinstance(result, SetKeywordsResponse)
+            assert result.updated_ids == ["12345"]
+            assert result.failed_ids == ["12346"]
+
+    @pytest.mark.asyncio
+    async def test_set_keywords_with_mailbox(self):
+        """Test set_keywords MCP tool with custom mailbox."""
+        mock_handler = AsyncMock()
+        mock_handler.set_keywords.return_value = (["12345"], [])
+
+        with patch("mcp_email_server.app.dispatch_handler", return_value=mock_handler):
+            result = await set_keywords(
+                account_name="test_account",
+                email_ids=["12345"],
+                keywords=["reviewed"],
+                mailbox="Archive",
+            )
+
+            assert isinstance(result, SetKeywordsResponse)
+            assert result.updated_ids == ["12345"]
+            mock_handler.set_keywords.assert_called_once_with(["12345"], ["reviewed"], "Archive")
+
+    @pytest.mark.asyncio
+    async def test_set_keywords_empty_list(self):
+        """Test set_keywords MCP tool with empty keywords list to clear keywords."""
+        mock_handler = AsyncMock()
+        mock_handler.set_keywords.return_value = (["12345"], [])
+
+        with patch("mcp_email_server.app.dispatch_handler", return_value=mock_handler):
+            result = await set_keywords(
+                account_name="test_account",
+                email_ids=["12345"],
+                keywords=[],
+            )
+
+            assert isinstance(result, SetKeywordsResponse)
+            assert result.updated_ids == ["12345"]
+            mock_handler.set_keywords.assert_called_once_with(["12345"], [], "INBOX")
+
+    @pytest.mark.asyncio
+    async def test_set_keywords_rejects_spaces(self):
+        """Test set_keywords MCP tool rejects keywords containing spaces."""
+        with pytest.raises(ValueError, match="must not contain spaces"):
+            await set_keywords(
+                account_name="test_account",
+                email_ids=["12345"],
+                keywords=["valid", "not valid"],
+            )

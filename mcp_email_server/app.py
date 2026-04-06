@@ -15,6 +15,7 @@ from mcp_email_server.emails.models import (
     AttachmentDownloadResponse,
     EmailContentBatchResponse,
     EmailMetadataPageResponse,
+    SetKeywordsResponse,
 )
 
 mcp = FastMCP("email")
@@ -194,6 +195,34 @@ async def delete_emails(
     if failed_ids:
         result += f", failed to delete {len(failed_ids)} email(s): {', '.join(failed_ids)}"
     return result
+
+
+@mcp.tool(
+    description="Set keywords (custom labels/tags) on one or more emails. Keywords are custom IMAP flags that can be used to categorize or label emails. This replaces all existing keywords on the specified emails. Use list_emails_metadata first to get the email_id.",
+)
+async def set_keywords(
+    account_name: Annotated[str, Field(description="The name of the email account.")],
+    email_ids: Annotated[
+        list[str],
+        Field(description="List of email_id to set keywords on (obtained from list_emails_metadata)."),
+    ],
+    keywords: Annotated[
+        list[str],
+        Field(
+            description="List of keywords to set on the emails. Pass an empty list to remove all keywords. Keywords are case-sensitive strings without spaces (e.g. 'important', 'todo', 'project_x').",
+        ),
+    ],
+    mailbox: Annotated[str, Field(default="INBOX", description="The mailbox containing the emails.")] = "INBOX",
+) -> SetKeywordsResponse:
+    # Validate that keywords don't contain spaces (IMAP flags are space-delimited)
+    invalid_keywords = [kw for kw in keywords if " " in kw]
+    if invalid_keywords:
+        msg = f"Keywords must not contain spaces. Invalid keywords: {', '.join(repr(kw) for kw in invalid_keywords)}"
+        raise ValueError(msg)
+
+    handler = dispatch_handler(account_name)
+    updated_ids, failed_ids = await handler.set_keywords(email_ids, keywords, mailbox)
+    return SetKeywordsResponse(updated_ids=updated_ids, failed_ids=failed_ids)
 
 
 @mcp.tool(
