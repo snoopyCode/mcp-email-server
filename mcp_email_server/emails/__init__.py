@@ -86,6 +86,28 @@ class EmailHandler(abc.ABC):
         """
 
     @abc.abstractmethod
+    async def set_keywords(
+        self,
+        email_ids: list[str],
+        keywords: list[str],
+        mailbox: str = "INBOX",
+    ) -> tuple[list[str], list[str]]:
+        """
+        Set keywords (custom IMAP flags) on emails by their UIDs.
+
+        Replaces all existing keywords with the provided keywords.
+        System flags (\\Seen, \\Flagged, etc.) are preserved.
+
+        Args:
+            email_ids: List of email UIDs to update.
+            keywords: List of keyword strings to set on the emails.
+            mailbox: Mailbox containing the emails (default: "INBOX").
+
+        Returns:
+            Tuple of (updated_ids, failed_ids).
+        """
+
+    @abc.abstractmethod
     async def download_attachment(
         self,
         email_id: str,

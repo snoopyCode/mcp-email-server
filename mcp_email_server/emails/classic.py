@@ -375,24 +375,49 @@ class EmailClient:
 
         return uid_dates
 
+    @staticmethod
+    def _extract_keywords(flags_str: bytes) -> list[str]:
+        """Extract keywords (non-system flags) from an IMAP FLAGS response.
+
+        IMAP system flags start with a backslash (e.g. \\Seen, \\Flagged).
+        Keywords are user-defined flags without a backslash prefix.
+        """
+        # Extract the FLAGS parenthesized list
+        flags_match = re.search(rb"FLAGS \(([^)]*)\)", flags_str)
+        if not flags_match:
+            return []
+
+        flags_content = flags_match.group(1).decode()
+        if not flags_content.strip():
+            return []
+
+        keywords = []
+        for flag in flags_content.split():
+            # System flags start with backslash; keywords do not
+            if not flag.startswith("\\"):
+                keywords.append(flag)
+        return keywords
+
     async def _batch_fetch_headers(
         self,
         imap: aioimaplib.IMAP4_SSL | aioimaplib.IMAP4,
         email_ids: list[bytes] | list[str],
     ) -> dict[str, dict[str, Any]]:
-        """Batch fetch headers for a list of UIDs."""
+        """Batch fetch headers and flags for a list of UIDs."""
         if not email_ids:
             return {}
 
         # Normalize to list of strings
         str_ids = [uid.decode() if isinstance(uid, bytes) else uid for uid in email_ids]
         uid_list = ",".join(str_ids)
-        _, data = await imap.uid("fetch", uid_list, "BODY.PEEK[HEADER]")
+        _, data = await imap.uid("fetch", uid_list, "(FLAGS BODY.PEEK[HEADER])")
 
         results: dict[str, dict[str, Any]] = {}
         for i, item in enumerate(data):
             if not isinstance(item, bytes) or b"BODY[HEADER]" not in item:
                 continue
+            # Extract keywords from FLAGS in this response line
+            keywords = self._extract_keywords(item)
             # First try to find UID in the same line (standard format)
             uid_match = re.search(rb"UID (\d+)", item)
             if uid_match and i + 1 < len(data) and isinstance(data[i + 1], bytearray):
@@ -400,6 +425,7 @@ class EmailClient:
                 raw_headers = bytes(data[i + 1])
                 metadata = self._parse_headers(uid, raw_headers)
                 if metadata:
+                    metadata["keywords"] = keywords
                     results[uid] = metadata
             # Proton Bridge format: UID comes AFTER header data in a separate item
             # Format: [i]=b'N FETCH (BODY[HEADER] {size}', [i+1]=bytearray(headers), [i+2]=b' UID xxx)'
@@ -410,6 +436,10 @@ class EmailClient:
                     raw_headers = bytes(data[i + 1])
                     metadata = self._parse_headers(uid, raw_headers)
                     if metadata:
+                        # Also check the trailing item for FLAGS
+                        if not keywords and isinstance(data[i + 2], bytes):
+                            keywords = self._extract_keywords(data[i + 2])
+                        metadata["keywords"] = keywords
                         results[uid] = metadata
 
         return results
@@ -982,6 +1012,64 @@ class EmailClient:
 
         return deleted_ids, failed_ids
 
+    async def set_keywords(
+        self,
+        email_ids: list[str],
+        keywords: list[str],
+        mailbox: str = "INBOX",
+    ) -> tuple[list[str], list[str]]:
+        """Set keywords (custom IMAP flags) on emails by their UIDs.
+
+        Replaces all existing keywords on the specified emails with the provided keywords.
+        System flags (\\Seen, \\Flagged, etc.) are preserved.
+
+        Returns (updated_ids, failed_ids).
+        """
+        imap = self._imap_connect()
+        updated_ids = []
+        failed_ids = []
+
+        try:
+            await imap._client_task
+            await imap.wait_hello_from_server()
+            await imap.login(self.email_server.user_name, self.email_server.password.get_secret_value())
+            await _send_imap_id(imap)
+            await imap.select(_quote_mailbox(mailbox))
+
+            # Build the keywords flag string (space-separated, no backslash prefix)
+            keywords_str = " ".join(keywords) if keywords else ""
+
+            for email_id in email_ids:
+                try:
+                    # First, fetch current flags to preserve system flags
+                    _, data = await imap.uid("fetch", email_id, "(FLAGS)")
+                    current_keywords = []
+                    for item in data:
+                        if isinstance(item, bytes) and b"FLAGS" in item:
+                            current_keywords = self._extract_keywords(item)
+                            break
+
+                    # Remove old keywords (if any)
+                    if current_keywords:
+                        old_keywords_str = " ".join(current_keywords)
+                        await imap.uid("store", email_id, "-FLAGS", f"({old_keywords_str})")
+
+                    # Add new keywords (if any)
+                    if keywords_str:
+                        await imap.uid("store", email_id, "+FLAGS", f"({keywords_str})")
+
+                    updated_ids.append(email_id)
+                except Exception as e:
+                    logger.error(f"Failed to set keywords on email {email_id}: {e}")
+                    failed_ids.append(email_id)
+        finally:
+            try:
+                await imap.logout()
+            except Exception as e:
+                logger.info(f"Error during logout: {e}")
+
+        return updated_ids, failed_ids
+
 
 class ClassicEmailHandler(EmailHandler):
     def __init__(self, email_settings: EmailSettings):
@@ -1110,6 +1198,15 @@ class ClassicEmailHandler(EmailHandler):
     async def delete_emails(self, email_ids: list[str], mailbox: str = "INBOX") -> tuple[list[str], list[str]]:
         """Delete emails by their UIDs. Returns (deleted_ids, failed_ids)."""
         return await self.incoming_client.delete_emails(email_ids, mailbox)
+
+    async def set_keywords(
+        self,
+        email_ids: list[str],
+        keywords: list[str],
+        mailbox: str = "INBOX",
+    ) -> tuple[list[str], list[str]]:
+        """Set keywords on emails by their UIDs. Returns (updated_ids, failed_ids)."""
+        return await self.incoming_client.set_keywords(email_ids, keywords, mailbox)
 
     async def download_attachment(
         self,

@@ -14,6 +14,7 @@ class EmailMetadata(BaseModel):
     recipients: list[str]  # Recipient list
     date: datetime
     attachments: list[str]
+    keywords: list[str] = []  # IMAP keywords (custom flags without backslash prefix)
 
     @classmethod
     def from_email(cls, email: dict[str, Any]):
@@ -25,6 +26,7 @@ class EmailMetadata(BaseModel):
             recipients=email.get("to", []),
             date=email["date"],
             attachments=email["attachments"],
+            keywords=email.get("keywords", []),
         )
 
 
@@ -63,3 +65,10 @@ class AttachmentDownloadResponse(BaseModel):
     mime_type: str
     size: int
     saved_path: str
+
+
+class SetKeywordsResponse(BaseModel):
+    """Response for set_keywords operation"""
+
+    updated_ids: list[str]
+    failed_ids: list[str]

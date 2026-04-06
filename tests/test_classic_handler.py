@@ -275,6 +275,53 @@ class TestClassicEmailHandler:
             mock_delete.assert_called_once_with(["789"], "Archive")
 
     @pytest.mark.asyncio
+    async def test_set_keywords(self, classic_handler):
+        """Test set_keywords method."""
+        mock_set_keywords = AsyncMock(return_value=(["123", "456"], []))
+
+        with patch.object(classic_handler.incoming_client, "set_keywords", mock_set_keywords):
+            updated_ids, failed_ids = await classic_handler.set_keywords(
+                email_ids=["123", "456"],
+                keywords=["important", "todo"],
+                mailbox="INBOX",
+            )
+
+            assert updated_ids == ["123", "456"]
+            assert failed_ids == []
+            mock_set_keywords.assert_called_once_with(["123", "456"], ["important", "todo"], "INBOX")
+
+    @pytest.mark.asyncio
+    async def test_set_keywords_with_failures(self, classic_handler):
+        """Test set_keywords method with some failures."""
+        mock_set_keywords = AsyncMock(return_value=(["123"], ["456"]))
+
+        with patch.object(classic_handler.incoming_client, "set_keywords", mock_set_keywords):
+            updated_ids, failed_ids = await classic_handler.set_keywords(
+                email_ids=["123", "456"],
+                keywords=["urgent"],
+            )
+
+            assert updated_ids == ["123"]
+            assert failed_ids == ["456"]
+            mock_set_keywords.assert_called_once_with(["123", "456"], ["urgent"], "INBOX")
+
+    @pytest.mark.asyncio
+    async def test_set_keywords_custom_mailbox(self, classic_handler):
+        """Test set_keywords method with custom mailbox."""
+        mock_set_keywords = AsyncMock(return_value=(["789"], []))
+
+        with patch.object(classic_handler.incoming_client, "set_keywords", mock_set_keywords):
+            updated_ids, failed_ids = await classic_handler.set_keywords(
+                email_ids=["789"],
+                keywords=["reviewed"],
+                mailbox="Archive",
+            )
+
+            assert updated_ids == ["789"]
+            assert failed_ids == []
+            mock_set_keywords.assert_called_once_with(["789"], ["reviewed"], "Archive")
+
+    @pytest.mark.asyncio
     async def test_download_attachment(self, classic_handler, tmp_path):
         """Test download_attachment method."""
         save_path = str(tmp_path / "downloaded_attachment.pdf")
@@ -457,11 +504,11 @@ Subject: No Date Email
     async def test_batch_fetch_headers_parses_response(self, email_client):
         """Test _batch_fetch_headers correctly parses IMAP BODY[HEADER] response."""
         mock_imap = AsyncMock()
-        # Simulate IMAP response format for BODY[HEADER]
+        # Simulate IMAP response format for BODY[HEADER] with FLAGS
         mock_imap.uid.return_value = (
             "OK",
             [
-                b"1 FETCH (UID 100 BODY[HEADER] {100}",
+                b"1 FETCH (FLAGS (\\Seen important todo) UID 100 BODY[HEADER] {100}",
                 bytearray(b"From: sender@example.com\r\nTo: recipient@example.com\r\nSubject: Test\r\n\r\n"),
                 b")",
             ],
@@ -472,3 +519,46 @@ Subject: No Date Email
         assert "100" in result
         assert result["100"]["subject"] == "Test"
         assert result["100"]["from"] == "sender@example.com"
+        assert result["100"]["keywords"] == ["important", "todo"]
+
+    @pytest.mark.asyncio
+    async def test_batch_fetch_headers_no_keywords(self, email_client):
+        """Test _batch_fetch_headers with no keywords in FLAGS."""
+        mock_imap = AsyncMock()
+        mock_imap.uid.return_value = (
+            "OK",
+            [
+                b"1 FETCH (FLAGS (\\Seen \\Flagged) UID 100 BODY[HEADER] {100}",
+                bytearray(b"From: sender@example.com\r\nTo: recipient@example.com\r\nSubject: Test\r\n\r\n"),
+                b")",
+            ],
+        )
+
+        result = await email_client._batch_fetch_headers(mock_imap, ["100"])
+
+        assert "100" in result
+        assert result["100"]["keywords"] == []
+
+    def test_extract_keywords_with_mixed_flags(self, email_client):
+        """Test _extract_keywords extracts only non-system flags."""
+        flags_str = b"1 FETCH (FLAGS (\\Seen \\Flagged important todo project_x) UID 100)"
+        keywords = EmailClient._extract_keywords(flags_str)
+        assert keywords == ["important", "todo", "project_x"]
+
+    def test_extract_keywords_no_keywords(self, email_client):
+        """Test _extract_keywords returns empty list when only system flags present."""
+        flags_str = b"1 FETCH (FLAGS (\\Seen \\Answered) UID 100)"
+        keywords = EmailClient._extract_keywords(flags_str)
+        assert keywords == []
+
+    def test_extract_keywords_empty_flags(self, email_client):
+        """Test _extract_keywords with empty FLAGS."""
+        flags_str = b"1 FETCH (FLAGS () UID 100)"
+        keywords = EmailClient._extract_keywords(flags_str)
+        assert keywords == []
+
+    def test_extract_keywords_no_flags_in_response(self, email_client):
+        """Test _extract_keywords with no FLAGS in response."""
+        flags_str = b"1 FETCH (UID 100)"
+        keywords = EmailClient._extract_keywords(flags_str)
+        assert keywords == []

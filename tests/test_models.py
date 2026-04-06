@@ -168,3 +168,73 @@ def test_email_body_response_includes_message_id():
         attachments=[],
     )
     assert response.message_id == "<abc123@example.com>"
+
+
+def test_email_metadata_includes_keywords():
+    """Test that EmailMetadata includes keywords field."""
+    metadata = EmailMetadata(
+        email_id="123",
+        subject="Test",
+        sender="sender@example.com",
+        recipients=["recipient@example.com"],
+        date=datetime.now(timezone.utc),
+        attachments=[],
+        keywords=["important", "todo"],
+    )
+    assert metadata.keywords == ["important", "todo"]
+
+
+def test_email_metadata_keywords_default_empty():
+    """Test that keywords default to empty list."""
+    metadata = EmailMetadata(
+        email_id="123",
+        subject="Test",
+        sender="sender@example.com",
+        recipients=["recipient@example.com"],
+        date=datetime.now(timezone.utc),
+        attachments=[],
+    )
+    assert metadata.keywords == []
+
+
+def test_email_metadata_from_email_with_keywords():
+    """Test from_email extracts keywords when present."""
+    now = datetime.now(timezone.utc)
+    email_dict = {
+        "email_id": "123",
+        "subject": "Test Subject",
+        "from": "test@example.com",
+        "to": ["recipient@example.com"],
+        "date": now,
+        "attachments": [],
+        "keywords": ["urgent", "project_x"],
+    }
+    email_data = EmailMetadata.from_email(email_dict)
+    assert email_data.keywords == ["urgent", "project_x"]
+
+
+def test_email_metadata_from_email_without_keywords():
+    """Test from_email handles missing keywords."""
+    now = datetime.now(timezone.utc)
+    email_dict = {
+        "email_id": "123",
+        "subject": "Test Subject",
+        "from": "test@example.com",
+        "to": ["recipient@example.com"],
+        "date": now,
+        "attachments": [],
+    }
+    email_data = EmailMetadata.from_email(email_dict)
+    assert email_data.keywords == []
+
+
+def test_set_keywords_response():
+    """Test SetKeywordsResponse model."""
+    from mcp_email_server.emails.models import SetKeywordsResponse
+
+    response = SetKeywordsResponse(
+        updated_ids=["123", "456"],
+        failed_ids=["789"],
+    )
+    assert response.updated_ids == ["123", "456"]
+    assert response.failed_ids == ["789"]
