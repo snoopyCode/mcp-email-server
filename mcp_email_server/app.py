@@ -214,6 +214,12 @@ async def set_keywords(
     ],
     mailbox: Annotated[str, Field(default="INBOX", description="The mailbox containing the emails.")] = "INBOX",
 ) -> SetKeywordsResponse:
+    # Validate that keywords don't contain spaces (IMAP flags are space-delimited)
+    invalid_keywords = [kw for kw in keywords if " " in kw]
+    if invalid_keywords:
+        msg = f"Keywords must not contain spaces. Invalid keywords: {', '.join(repr(kw) for kw in invalid_keywords)}"
+        raise ValueError(msg)
+
     handler = dispatch_handler(account_name)
     updated_ids, failed_ids = await handler.set_keywords(email_ids, keywords, mailbox)
     return SetKeywordsResponse(updated_ids=updated_ids, failed_ids=failed_ids)

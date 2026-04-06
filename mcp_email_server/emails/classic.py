@@ -1037,7 +1037,7 @@ class EmailClient:
             await imap.select(_quote_mailbox(mailbox))
 
             # Build the keywords flag string (space-separated, no backslash prefix)
-            keywords_str = " ".join(keywords) if keywords else ""
+            keywords_str = " ".join(keywords)
 
             for email_id in email_ids:
                 try:

@@ -616,3 +616,13 @@ class TestMcpTools:
             assert isinstance(result, SetKeywordsResponse)
             assert result.updated_ids == ["12345"]
             mock_handler.set_keywords.assert_called_once_with(["12345"], [], "INBOX")
+
+    @pytest.mark.asyncio
+    async def test_set_keywords_rejects_spaces(self):
+        """Test set_keywords MCP tool rejects keywords containing spaces."""
+        with pytest.raises(ValueError, match="must not contain spaces"):
+            await set_keywords(
+                account_name="test_account",
+                email_ids=["12345"],
+                keywords=["valid", "not valid"],
+            )
